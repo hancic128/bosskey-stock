@@ -1,10 +1,9 @@
 name: CI
 
+# 仅手动触发（Actions 额度纪律：禁止 push / PR 自动跑，见 Trilium《部署规范》）。
+# 发布走 publish.yml（release published 触发，release 为手动创建的动作）。
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
