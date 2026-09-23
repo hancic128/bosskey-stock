@@ -1,5 +1,11 @@
 # STATUS
 
+## [2026-09-22] README 加 PyPI 下载量徽章
+
+- README 顶部徽章条在 `pypi/v` 后面追加三枚 shields 动态下载量徽章：`pypi/dd`（日）、`pypi/dw`（周）、`pypi/dm`（月），标签统一 `downloads/day` / `downloads/week` / `downloads/month`，颜色 `blue`。
+- 与版本徽章同源（shields 读 pypistats.org），数值自动更新，无需随发版手改。shields 对同一 IP 的匿名请求有上游限流，本机 curl 可能只看到 `rate limited by upstream service`，GitHub 上经 camo 代理缓存正常。
+- 仅文档改动，未动代码、未发版。
+
 ## [2026-09-14] 发布 v0.4.0
 
 - 产出：commit `caa351c`（main）+ tag `v0.4.0` + GitHub Release v0.4.0；`publish.yml` 经 OIDC 发 PyPI 成功，`bosskey_stock-0.4.0-py3-none-any.whl` / `.tar.gz` 已上线；CI（3.10 / 3.11 / 3.12）通过。

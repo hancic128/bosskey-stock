@@ -2,6 +2,9 @@
   <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/pypi/v/bosskey-stock?label=pypi&color=orange" alt="PyPI">
+  <img src="https://img.shields.io/pypi/dd/bosskey-stock?label=downloads%2Fday&color=blue" alt="Downloads/Day">
+  <img src="https://img.shields.io/pypi/dw/bosskey-stock?label=downloads%2Fweek&color=blue" alt="Downloads/Week">
+  <img src="https://img.shields.io/pypi/dm/bosskey-stock?label=downloads%2Fmonth&color=blue" alt="Downloads/Month">
   <img src="https://img.shields.io/github/contributors/Angryshark128/bosskey-stock" alt="Contributors">
 </p>
 
