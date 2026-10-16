@@ -2,7 +2,14 @@
 
 import pytest
 
-from bosskey_stock.app import _build_summary, _build_table, _build_view, _pos_metrics
+from bosskey_stock.app import (
+    _build_market_indices_line,
+    _build_summary,
+    _build_table,
+    _build_view,
+    _group_filter,
+    _pos_metrics,
+)
 from bosskey_stock.i18n import lang
 
 
@@ -62,12 +69,14 @@ def test_build_table_columns_grow_with_mode():
     assert len(_build_table(stocks, h, 2, en).columns) == 13
     # mode 3 不追加 TodayP/L%（与 Chg% 重复），共 14 列
     assert len(_build_table(stocks, h, 3, en).columns) == 14
-    # 中文表头
-    headers = [c.header for c in _build_table(stocks, h, 3, zh).columns]
-    assert "今日盈亏" in headers
-    assert "涨跌幅" in headers
-    assert "TodayP/L%" not in headers
-    assert "今日盈亏%" not in headers
+    # 中文表头（分组首列前注 `│ `，逐个 header 用 substring 校验）
+    headers = [c.header.plain for c in _build_table(stocks, h, 3, zh).columns]
+    assert any("今日盈亏" in h for h in headers)
+    assert any("涨跌幅" in h for h in headers)
+    assert not any("今日盈亏%" in h for h in headers)
+    # 英文：TodayP/L% 不该出现
+    headers_en = [c.header.plain for c in _build_table(stocks, h, 3, en).columns]
+    assert not any("TodayP/L%" in h for h in headers_en)
 
 
 def test_build_table_etf_price_precision():
@@ -78,7 +87,7 @@ def test_build_table_etf_price_precision():
     etf["open"] = 4.750
     tr = lang("en")["t"]
     table = _build_table([etf], {}, 0, tr)
-    assert "4.728" in table.columns[2]._cells[0].plain  # Price
+    assert "4.728" in table.columns[2]._cells[0].plain  # Price（含 `│ ` 前缀也匹配）
     assert "4.750" in table.columns[6]._cells[0].plain  # Open
     # 股票保持 2 位
     stk_table = _build_table([_stock()], {}, 0, tr)
@@ -93,8 +102,9 @@ def test_build_table_reit_price_precision():
     reit["change"] = -0.012
     tr = lang("en")["t"]
     table = _build_table([reit], {}, 0, tr)
-    assert table.columns[2]._cells[0].plain == "1.458"  # Price
-    assert table.columns[4]._cells[0].plain == "-0.012"  # Chg
+    # 分组首列前注 `│ `，断言改 endswith
+    assert table.columns[2]._cells[0].plain.endswith("1.458")  # Price
+    assert table.columns[4]._cells[0].plain.endswith("-0.012")  # Chg
 
 
 def test_build_summary_modes():
@@ -137,18 +147,112 @@ def test_build_view_help_hidden_by_default():
     assert "q quit" in v2.renderables[2].plain
 
 
+# ── 底部大盘指数行 ──────────────────────────────────────────────
+
+
+def _index(code="sh:000001", name="上证指数", price=3888.1, change=-46.3, pct=-1.18):
+    """Mock 指数行情 dict，结构与 data.fetch 返回一致。"""
+    return {
+        "code": code,
+        "name": name,
+        "open": None,
+        "pre_close": 3934.4,
+        "price": price,
+        "high": None,
+        "low": None,
+        "vol": None,
+        "amount": None,
+        "date": "2026-09-11",
+        "trade_time": "15:00:00",
+        "change": change,
+        "change_pct": pct,
+    }
+
+
+def test_build_market_indices_line_short_names():
+    """底部指数行只显示缩写 + 涨跌幅。"""
+    zh = lang("zh")["t"]
+    en = lang("en")["t"]
+    indices = [
+        _index("sh:000001", "上证指数", 3888.1, -46.3, -1.18),
+        _index("sz:399001", "深证成指", 12234.5, -111.17, -0.90),
+        _index("sz:399006", "创业板指", 2333.33, -12.34, -0.53),
+    ]
+    text_zh = _build_market_indices_line(indices, zh)
+    plain_zh = text_zh.plain
+    assert "上指" in plain_zh
+    assert "深成" in plain_zh
+    assert "创业" in plain_zh
+    assert "-1.18%" in plain_zh
+    assert "-0.90%" in plain_zh
+    # 全名不该出现（已缩写）
+    assert "上证指数" not in plain_zh
+    assert "深证成指" not in plain_zh
+    # 也没有 code / 涨跌额
+    assert "sh:000001" not in plain_zh
+    assert "-46.30" not in plain_zh
+
+    text_en = _build_market_indices_line(indices, en)
+    assert "SSE" in text_en.plain
+    assert "SZSE" in text_en.plain
+    assert "ChiNext" in text_en.plain
+
+
+def test_build_market_indices_line_separator_and_dash():
+    """空列表返回空 Text；未知 code 退回全名；涨跌幅缺失显示 `--`；分隔符 ` · `。"""
+    zh = lang("zh")["t"]
+    # 空
+    assert _build_market_indices_line([], zh).plain == ""
+    # 未知 code
+    text = _build_market_indices_line([_index(code="zz:999999", name="某指数", pct=0.5)], zh)
+    assert "某指数" in text.plain
+    # 涨跌幅缺失
+    s = _index()
+    s["change_pct"] = None
+    text = _build_market_indices_line([s], zh)
+    assert "上指" in text.plain
+    assert "--" in text.plain
+    # 多条之间用 ` · ` 分隔
+    indices = [_index("sh:000001"), _index("sz:399001", "深证成指", pct=0.5)]
+    plain = _build_market_indices_line(indices, zh).plain
+    assert " · " in plain
+    assert plain.index("上指") < plain.index(" · ") < plain.index("深成")
+
+
+def test_build_view_inserts_indices_line():
+    """indices 行位于状态行和市值行之间。"""
+    tr = lang("zh")["t"]
+    stocks = [_stock()]
+    indices = [_index()]
+
+    # indices=None → 不渲染
+    v_none = _build_view(stocks, {}, 0, False, False, "14:32:05", tr)
+    assert len(v_none.renderables) == 2  # table + status
+    # indices=[] → 不渲染（断网占位）
+    v_empty = _build_view(stocks, {}, 0, False, False, "14:32:05", tr, indices=[])
+    assert len(v_empty.renderables) == 2
+    # indices=[...] → 状态行下面、summary 上面多一段
+    v_with = _build_view(
+        stocks, {"600519": {"shares": 100, "cost": 1600.0}}, 3, False, False, "14:32:05",
+        tr, indices=indices,
+    )
+    # table + status + indices line + summary = 4
+    assert len(v_with.renderables) == 4
+    # indices 行的 plain 包含缩写
+    assert "上指" in v_with.renderables[2].plain
+    # status 在 indices 之前、summary 在 indices 之后
+    assert "最近刷新" in v_with.renderables[1].plain
+    assert "市值" in v_with.renderables[3].plain
+
+
 def test_group_filter_all():
     """group_view=None 时原样返回。"""
-    from bosskey_stock.app import _group_filter
-
     stocks = [{"code": "600519"}, {"code": "000001"}]
     assert _group_filter(stocks, {}, None) is stocks
 
 
 def test_group_filter_by_group_order():
     """分组视图按组内顺序排列，忽略全局顺序；无行情的组内代码跳过。"""
-    from bosskey_stock.app import _group_filter
-
     stocks = [{"code": "600519"}, {"code": "000001"}, {"code": "300750"}]
     groups = {"持仓": ["000001", "600519"], "自选": ["888888"]}
     assert [s["code"] for s in _group_filter(stocks, groups, "持仓")] == ["000001", "600519"]
@@ -157,8 +261,6 @@ def test_group_filter_by_group_order():
 
 def test_group_filter_missing_group():
     """分组不存在时为空列表。"""
-    from bosskey_stock.app import _group_filter
-
     stocks = [{"code": "600519"}]
     assert _group_filter(stocks, {}, "不存在") == []
 
@@ -284,10 +386,12 @@ def test_build_table_otc_fund_price_and_dashes():
     """场外基金：净值 4 位（不被舍成 2.838），量额/开高低显示 --。"""
     tr = lang("en")["t"]
     table = _build_table([_otc_fund()], {}, 0, tr)
-    assert table.columns[2]._cells[0].plain == "2.8377"  # Price
-    assert table.columns[4]._cells[0].plain == "+0.0117"  # Chg
+    # 分组首列前注 `│ `，断言改 endswith
+    assert table.columns[2]._cells[0].plain.endswith("2.8377")  # Price
+    assert table.columns[4]._cells[0].plain.endswith("+0.0117")  # Chg
     for i in (5, 6, 7, 8):  # Vol / Open / High / Low
-        assert table.columns[i]._cells[0].plain == "--"
+        # Vol 是分组首列前注 `│ `，用 endswith 兼容
+        assert table.columns[i]._cells[0].plain.endswith("--")
 
 
 def test_build_table_otc_fund_fractional_shares():
@@ -295,10 +399,10 @@ def test_build_table_otc_fund_fractional_shares():
     tr = lang("en")["t"]
     h = {"fu:110022": {"shares": 352.4, "cost": 2.8123}}
     table = _build_table([_otc_fund()], h, 2, tr)
-    assert table.columns[9]._cells[0].plain == "352.4"  # Pos
-    assert table.columns[10]._cells[0].plain == "2.8123"  # Cost（4 位）
+    assert table.columns[9]._cells[0].plain.endswith("352.4")  # Pos
+    assert table.columns[10]._cells[0].plain.endswith("2.8123")  # Cost（4 位）
     # HoldP/L = (2.8377 - 2.8123) * 352.4 = +8.95096
-    assert table.columns[11]._cells[0].plain == "+8.95"
+    assert table.columns[11]._cells[0].plain.endswith("+8.95")
 
 
 def test_build_table_integer_shares_unchanged():
@@ -306,8 +410,8 @@ def test_build_table_integer_shares_unchanged():
     tr = lang("en")["t"]
     h = {"600519": {"shares": 100, "cost": 1600.0}}
     table = _build_table([_stock()], h, 1, tr)
-    assert table.columns[9]._cells[0].plain == "100"
-    assert table.columns[10]._cells[0].plain == "1600"
+    assert table.columns[9]._cells[0].plain.endswith("100")
+    assert table.columns[10]._cells[0].plain.endswith("1600")
 
 
 def test_fmt_price_and_shares_helpers():

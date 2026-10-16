@@ -20,6 +20,44 @@ from .boss import BossGenerator
 from .data import fetch, price_decimals
 from .i18n import lang
 
+# ── 底部大盘指数（缩写一行） ───────────────────────────────────────
+# 显式前缀避开 sz:000001=平安银行歧义；与段位规则一致的就裸代码、不一致才存前缀。
+_MARKET_INDICES = (
+    "sh:000001",  # 上证指数
+    "sz:399001",  # 深证成指
+    "sz:399006",  # 创业板指
+    "sh:000300",  # 沪深 300
+    "sh:000905",  # 中证 500
+    "sh:000688",  # 科创 50
+)
+# 缩写：code → i18n key（在 i18n._T 维护中英文）
+_INDEX_SHORT_KEYS = {
+    "sh:000001": "idx_sse",
+    "sz:399001": "idx_szse",
+    "sz:399006": "idx_chinext",
+    "sh:000300": "idx_csi300",
+    "sh:000905": "idx_csi500",
+    "sh:000688": "idx_star",
+}
+
+
+# ── 列分组与竖线分隔 ─────────────────────────────────────────
+# 自然分组：标识 / 行情 / 交易 / 持仓 / 收益 / 今日。
+# 仅在每个分组**首列**前注入 `│`，让组与组之间出现竖线、组内不出现；
+# 表格整体仍用 HORIZONTALS box（行间 `─` 分隔，无外框）。
+_GROUP_STARTS = frozenset({"Price", "Vol", "Pos", "HoldP/L", "TodayP/L"})
+
+
+def _with_sep(text):
+    """在 Text 单元格内容前注一个 `│ ` 分隔符（dim 灰色）以标记组边界。
+
+    `│` 与单元格原始样式（红/绿/默认）独立，由 `bright_black` 固定，保证它是结构性
+    标记、不喧宾夺主。
+    """
+    prefix = Text("│ ", style="bright_black")
+    prefix.append_text(text)
+    return prefix
+
 # ── 交易时段 ────────────────────────────────────────────
 
 _MORNING = (9 * 60 + 30, 11 * 60 + 30)
@@ -186,7 +224,10 @@ def _build_table(stocks, holdings, mode, tr, colorize=True, group_name=None, has
     if mode >= 3:
         cols += ["TodayP/L"]
     for col in cols:
-        table.add_column(tr(_COL_KEYS[col]))
+        header = Text(tr(_COL_KEYS[col]))
+        if col in _GROUP_STARTS:
+            header = _with_sep(header)
+        table.add_column(header)
 
     for s in stocks:
         price = s["price"]
@@ -229,6 +270,11 @@ def _build_table(stocks, holdings, mode, tr, colorize=True, group_name=None, has
             else:
                 row.append(Text("--"))
 
+        # 分组首列前注 `│`（dim），让竖线只出现在组边界
+        row = [
+            _with_sep(cell) if col in _GROUP_STARTS else cell
+            for col, cell in zip(cols, row)
+        ]
         table.add_row(*row)
 
     return table
@@ -307,17 +353,41 @@ def _build_help(tr):
     return Text(tr("help_hint"), style="bright_black")
 
 
+def _build_market_indices_line(indices, tr, colorize=True):
+    """底部一行：缩写指数名 + 涨跌幅（红涨绿跌），以 ` · ` 分隔。
+
+    indices 形态与 data.fetch 返回一致（按 _MARKET_INDICES 顺序）。不在
+    _INDEX_SHORT_KEYS 里的代码回退用全名；空列表返回空 Text（让断网时不显示整行）。
+    """
+    if not indices:
+        return Text("")
+
+    text = Text()
+    for i, s in enumerate(indices):
+        if i > 0:
+            text.append(" · ", style="bright_black")
+        key = _INDEX_SHORT_KEYS.get(s["code"])
+        text.append(tr(key) if key else s["name"])
+        pct = s.get("change_pct")
+        if pct is None:
+            text.append(" --", style="bright_black")
+        else:
+            text.append(f" {pct:+.2f}%", style=_pl_style(pct, colorize))
+    return text
+
+
 def _build_view(
     stocks, holdings, mode, after, offline, ts, tr, show_help=False, colorize=True,
-    group_name=None, has_groups=False,
+    group_name=None, has_groups=False, indices=None,
 ):
-    parts = [
-        _build_table(
-            stocks, holdings, mode, tr, colorize=colorize, group_name=group_name,
-            has_groups=has_groups,
-        ),
-        _build_status(stocks, after, offline, ts, mode, tr),
-    ]
+    parts = [_build_table(
+        stocks, holdings, mode, tr, colorize=colorize, group_name=group_name,
+        has_groups=has_groups,
+    )]
+    parts.append(_build_status(stocks, after, offline, ts, mode, tr))
+    # 底部大盘指数行：状态行下面、汇总行上面；空列表静默跳过（断网不显示整行）
+    if indices:
+        parts.append(_build_market_indices_line(indices, tr, colorize=colorize))
     if mode:
         parts.append(_build_summary(stocks, holdings, mode, tr, colorize=colorize))
     if show_help:
@@ -343,6 +413,11 @@ def main_loop(cfg, lang_code=None):
     group_names = list(groups.keys())
     interval = cfg["display"]["refresh_interval"]
 
+    # 大盘指数与自选股一并 fetch，一次网络请求；按 code 字段拆成两份 cache
+    watchlist_set = set(codes)
+    fetch_codes = list(codes) + [c for c in _MARKET_INDICES if c not in watchlist_set]
+    index_set = set(_MARKET_INDICES)
+
     boss = BossGenerator()
     boss_mode = False
     mode = 3  # 显示模式：默认全部列（3=全 14 列），t 键逐层收起
@@ -354,10 +429,13 @@ def main_loop(cfg, lang_code=None):
     tr = lang_state["t"]
 
     # 先拉数据，再进备屏（避免用户看到 Loading… 后卡住）
-    stocks_cache = fetch(codes)
-    offline = stocks_cache is None
-    if stocks_cache is None:
-        stocks_cache = []
+    initial = fetch(fetch_codes)
+    offline = initial is None
+    if initial is None:
+        stocks_cache, indices_cache = [], []
+    else:
+        stocks_cache = [s for s in initial if s["code"] in watchlist_set]
+        indices_cache = [s for s in initial if s["code"] in index_set]
     last_refresh = datetime.now().timestamp()
 
     fd = sys.stdin.fileno()
@@ -372,7 +450,7 @@ def main_loop(cfg, lang_code=None):
                 _build_view(
                     _group_filter(stocks_cache, groups, group_view), holdings, mode,
                     not _in_session(), offline, ts, tr, show_help, colorize, group_view,
-                    bool(group_names),
+                    bool(group_names), indices_cache,
                 ),
                 refresh=True,
             )
@@ -420,19 +498,20 @@ def main_loop(cfg, lang_code=None):
                 elapsed = now.timestamp() - last_refresh
 
                 if force or (not after and elapsed >= interval):
-                    result = fetch(codes)
+                    result = fetch(fetch_codes)
                     if result is None:
                         offline = True
                     else:
                         offline = False
-                        stocks_cache = result
+                        stocks_cache = [s for s in result if s["code"] in watchlist_set]
+                        indices_cache = [s for s in result if s["code"] in index_set]
                     last_refresh = now.timestamp()
 
                 live.update(
                     _build_view(
                         _group_filter(stocks_cache, groups, group_view), holdings, mode,
                         after, offline, ts, tr, show_help, colorize, group_view,
-                        bool(group_names),
+                        bool(group_names), indices_cache,
                     ),
                     refresh=True,
                 )
