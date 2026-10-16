@@ -33,6 +33,13 @@ _T = {
     "col_group_pos_cost": ("Pos/Cost", "持仓/成本"),
     "col_group_hold_pl": ("HoldP/L", "持仓盈亏"),
     "col_group_today_pl": ("TodayP/L", "今日盈亏"),
+    # 大盘指数缩写（底部一行，仅名称 + 涨跌幅）
+    "idx_sse": ("SSE", "上指"),
+    "idx_szse": ("SZSE", "深成"),
+    "idx_chinext": ("ChiNext", "创业"),
+    "idx_csi300": ("HS300", "300"),
+    "idx_csi500": ("CSI500", "500"),
+    "idx_star": ("STAR", "科创"),
     # 底部汇总
     "summary_value_cost": ("Value {v} · Cost {c}", "市值 {v} · 成本 {c}"),
     "summary_hold_pl": ("HoldP/L", "持仓盈亏"),

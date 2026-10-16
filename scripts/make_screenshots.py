@@ -8,7 +8,7 @@
     python scripts/make_screenshots.py [--gif-only] [--width N]
 
 依赖:
-    rich（项目运行时依赖）；macOS qlmanage（SVG→PNG 栅格化，合成 GIF 时需要）。
+    rich（项目运行时依赖）；PIL + macOS qlmanage（SVG→PNG 栅格化，合成 GIF 时需要）。
 
 SVG 由 Rich 的 export_svg 直接生成；PNG/GIF 仅用于 demo 动画。
 """
@@ -19,7 +19,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from PIL import Image
 from rich.console import Console
 
 from bosskey_stock import app
@@ -59,6 +58,35 @@ def _stocks():
     ]
 
 
+def _indices():
+    """顶部大盘指数 mock，结构与 data.fetch 返回一致；与 app._MARKET_INDICES 顺序对应。"""
+    def mk(code, name, pre, price, change, pct):
+        return {
+            "code": code,
+            "name": name,
+            "open": None,
+            "pre_close": pre,
+            "price": price,
+            "high": None,
+            "low": None,
+            "vol": None,
+            "amount": None,
+            "date": "2026-08-01",
+            "trade_time": "14:32:05",
+            "change": change,
+            "change_pct": pct,
+        }
+
+    return [
+        mk("sh:000001", "上证指数", 3934.40, 3888.11, -46.29, -1.18),
+        mk("sz:399001", "深证成指", 12345.67, 12234.50, -111.17, -0.90),
+        mk("sz:399006", "创业板指", 2345.67, 2333.33, -12.34, -0.53),
+        mk("sh:000300", "沪深300", 4523.10, 4501.20, -21.90, -0.48),
+        mk("sh:000905", "中证500", 5678.90, 5690.10, 11.20, 0.20),
+        mk("sh:000688", "科创50", 934.12, 942.30, 8.18, 0.88),
+    ]
+
+
 HOLDINGS = {
     "600519": {"shares": 100, "cost": 1600.0},
     "000001": {"shares": 300, "cost": 12.34},
@@ -87,27 +115,35 @@ def _boss_view():
 def _render_gif_frames():
     """返回 (views, durations_ms, titles) 列表。"""
     stocks = _stocks()
+    indices = _indices()
     en = app.lang("en")["t"]
     zh = app.lang("zh")["t"]
     frames = [
-        (app._build_view(stocks, HOLDINGS, 0, False, False, "14:32:05", en), 900, "bosskey: basic"),
         (
-            app._build_view(stocks, HOLDINGS, 1, False, False, "14:32:05", en),
+            app._build_view(stocks, HOLDINGS, 0, False, False, "14:32:05", en, indices=indices),
+            900,
+            "bosskey: basic",
+        ),
+        (
+            app._build_view(stocks, HOLDINGS, 1, False, False, "14:32:05", en, indices=indices),
             900,
             "press t: +Pos/Cost",
         ),
         (
-            app._build_view(stocks, HOLDINGS, 2, False, False, "14:32:05", en),
+            app._build_view(stocks, HOLDINGS, 2, False, False, "14:32:05", en, indices=indices),
             900,
             "press t: +HoldP/L",
         ),
         (
-            app._build_view(stocks, HOLDINGS, 3, False, False, "14:32:05", en),
+            app._build_view(stocks, HOLDINGS, 3, False, False, "14:32:05", en, indices=indices),
             1000,
             "press t: +TodayP/L",
         ),
         (
-            app._build_view(stocks, HOLDINGS, 3, False, False, "14:32:05", zh, show_help=True),
+            app._build_view(
+                stocks, HOLDINGS, 3, False, False, "14:32:05", zh,
+                show_help=True, indices=indices,
+            ),
             1200,
             "press l: 中文界面 + h 快捷键提示",
         ),
@@ -139,6 +175,9 @@ def _svg_to_png(svg_path, out_png, size):
 
 
 def _make_gif(width):
+    from PIL import Image
+
+
     print("render GIF frames as SVG ...")
     frames = _render_gif_frames()
     svgs = []
@@ -196,11 +235,12 @@ def main():
     width = args.width
 
     stocks = _stocks()
+    indices = _indices()
     en = app.lang("en")["t"]
     if not args.gif_only:
         print("normal mode SVG (mode 3) ...")
         _export_svg(
-            app._build_view(stocks, HOLDINGS, 3, False, False, "14:32:05", en),
+            app._build_view(stocks, HOLDINGS, 3, False, False, "14:32:05", en, indices=indices),
             DOCS / "screenshot-normal.svg",
             "bosskey: 行情 + 持仓收益",
             width,
